@@ -28,6 +28,34 @@ pub struct RGB {
     pub b: f32,
 }
 
+impl RGB {
+    pub const BLACK: RGB = RGB {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+    };
+    pub const RED: RGB = RGB {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+    };
+    pub const GREEN: RGB = RGB {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+    };
+    pub const BLUE: RGB = RGB {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+    };
+    pub const WHITE: RGB = RGB {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+    };
+}
+
 impl Display for RGB {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let r = self.r;
@@ -401,47 +429,108 @@ mod tests {
     use super::*;
     use std::println;
 
+    fn round(x: f32) -> f32 {
+        (x * 100.0).round() / 100.0
+    }
+
+    /// Equal to the second decimal.
+    fn approximately_equal(actual: RGBW, expected: RGBW) {
+        assert_eq!(
+            round(actual.r),
+            round(expected.r),
+            "found {actual}, expected {expected}"
+        );
+        assert_eq!(
+            round(actual.g),
+            round(expected.g),
+            "found {actual}, expected {expected}"
+        );
+        assert_eq!(
+            round(actual.b),
+            round(expected.b),
+            "found {actual}, expected {expected}"
+        );
+        assert_eq!(
+            round(actual.w),
+            round(expected.w),
+            "found {actual}, expected {expected}"
+        );
+    }
+
+    fn assert_clean_cieluv_conversion(rgb: RGB) {
+        let expected = RGBW::from(rgb);
+        let cieluv = CIELUV::from(rgb);
+        approximately_equal(cieluv.into(), expected.into());
+    }
+
+    /// Red, green, blue, yellow and magenta convert cleanly to CIELUV and back.
     #[test]
-    fn test_rgbw_red_yellow() {
-        let red = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 0.0, });
-        let yellow = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 0.0, });
-        for i in 0..=100 {
-            let i = i as f32 / 100.0;
-            let step = CIELUV::interpolate(&red, &yellow, i);
-            let rgb = RGB::from(step);
-            let rgbw = RGBW::from(step);
-            let l = step.l;
-            let c = step.chroma();
-            println!("Red->Yellow {i:1.02}: L*={l:1.02}, {rgbw}");
-            println!("c={c:1.02}                      {rgb}");
+    fn test_saturated_clean_conversion() {
+        assert_clean_cieluv_conversion(RGB {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        });
+        assert_clean_cieluv_conversion(RGB {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+        });
+        assert_clean_cieluv_conversion(RGB {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+        });
+        assert_clean_cieluv_conversion(RGB {
+            r: 1.0,
+            g: 0.0,
+            b: 1.0,
+        });
+        assert_clean_cieluv_conversion(RGB {
+            r: 1.0,
+            g: 1.0,
+            b: 0.0,
+        });
+
+        // Teal is too light to convert cleanly, it will contain a white component.
+        //assert_clean_cieluv_conversion(RGB { r: 0.0, g: 1.0, b: 1.0 });
+    }
+
+    fn print_gradient_as_rgbw(a: impl Into<CIELUV>, b: impl Into<CIELUV>, steps: usize) {
+        let a = a.into();
+        let b = b.into();
+
+        println!("Start.........: {a}");
+        println!("End...........: {b}");
+
+        for i in 0..=steps {
+            let i = i as f32 / steps as f32;
+            let cieluv = CIELUV::interpolate(&a, &b, i);
+            let rgbw = RGBW::from(cieluv);
+            let l = cieluv.l;
+            let sat = cieluv.saturation();
+            let c = cieluv.chroma();
+            println!("Gradient {i:1.03}: L*={l:1.03}, sat={sat:1.03}, chroma={c:1.03} // {rgbw}");
         }
+    }
+
+    #[test]
+    fn test_rgbw_red_green() {
+        print_gradient_as_rgbw(RGB::RED, RGB::GREEN, 100);
     }
 
     #[test]
     fn test_rgbw_black_white() {
-        let black = CIELUV::from(RGB { r: 0.0, g: 0.0, b: 0.0, });
-        let white = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 1.0, });
-        for i in 0..=100 {
-            let i = i as f32 / 100.0;
-            let step = CIELUV::interpolate(&black, &white, i);
-            let rgb = RGBW::from(step);
-            let l = step.l;
-            println!("Black->White {i:1.02}: L*={l:1.02}, {rgb}");
-        }
+        print_gradient_as_rgbw(RGB::BLACK, RGB::WHITE, 100);
     }
 
     #[test]
     fn test_rgbw_green_magenta() {
-        let green = CIELUV::from(RGB { r: 0.0, g: 1.0, b: 0.0, });
-        let magenta = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 1.0, });
-        for i in 0..=100 {
-            let i = i as f32 / 100.0;
-            let step = CIELUV::interpolate(&green, &magenta, i);
-            let rgb = RGBW::from(step);
-            let l = step.l;
-            let c = step.chroma();
-            let sat = step.saturation();
-            println!("Green->Magenta {i:1.02}: L*={l:1.02}, c={c:1.02}, sat={sat:1.02}, {rgb}");
-        }
+        let magenta = CIELUV::from(RGB {
+            r: 1.0,
+            g: 0.0,
+            b: 1.0,
+        });
+        print_gradient_as_rgbw(RGB::GREEN, magenta, 100);
     }
 }
