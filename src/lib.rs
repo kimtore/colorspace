@@ -10,12 +10,36 @@ extern crate std;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::println;
+
     #[test]
-    fn test() {}
+    fn test_rgb_standard_conversion() {
+        let red = CIELUV::from(RGB {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        });
+        let yellow = CIELUV::from(RGB {
+            r: 1.0,
+            g: 1.0,
+            b: 0.0,
+        });
+        for i in 0..=100 {
+            let i = i as f32 / 100.0;
+            let step = CIELUV::interpolate(&red, &yellow, i);
+            let rgb = RGBW::from(step);
+            let l = step.l;
+            println!("Red->Yellow {i:1.02}: L*={l:1.02}, {rgb}");
+        }
+    }
 }
 
 #[cfg(not(any(test, feature = "std")))]
 use num_traits::Float;
+
+use core::fmt::Display;
+use std::fmt::Formatter;
 
 /// Represents a color in the sRGB color space.
 ///
@@ -24,11 +48,20 @@ use num_traits::Float;
 /// * `r` is the amount of red,
 /// * `g` is the amount of green,
 /// * `b` is the amount of blue.
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct RGB {
     pub r: f32,
     pub g: f32,
     pub b: f32,
+}
+
+impl Display for RGB {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let r = self.r;
+        let g = self.g;
+        let b = self.b;
+        write!(f, "RGB R={r:1.2}, G={g:1.2}, B={b:1.2}")
+    }
 }
 
 impl From<XYZ> for RGB {
@@ -69,12 +102,22 @@ impl From<HCL> for RGB {
 /// * `g` is the amount of green,
 /// * `b` is the amount of blue,
 /// * `w` is the amount of white.
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct RGBW {
     pub r: f32,
     pub g: f32,
     pub b: f32,
     pub w: f32,
+}
+
+impl Display for RGBW {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let r = self.r;
+        let g = self.g;
+        let b = self.b;
+        let w = self.w;
+        write!(f, "RGBW R={r:1.2}, G={g:1.2}, B={b:1.2}, W={w:1.2}")
+    }
 }
 
 /// For pure RGB values, we convert them directly into RGBW without adding any white.
@@ -105,9 +148,9 @@ impl From<XYZ> for RGBW {
 
         // sYCC: Amendment 1 to IEC 61966-2-1:1999.
         // Higher conversion precision with seven decimals.
-        let r = (3.2406255 * xyz.x - 1.5372080 * xyz.y - 0.4986286 * xyz.z).clamp(0.0, 1.0);
-        let g = (-0.9689307 * xyz.x + 1.8758561 * xyz.y + 0.0415175 * xyz.z).clamp(0.0, 1.0);
-        let b = (0.0557101 * xyz.x - 0.2040211 * xyz.y + 1.0570959 * xyz.z).clamp(0.0, 1.0);
+        let r = 3.2406255 * xyz.x - 1.5372080 * xyz.y - 0.4986286 * xyz.z;
+        let g = -0.9689307 * xyz.x + 1.8758561 * xyz.y + 0.0415175 * xyz.z;
+        let b = 0.0557101 * xyz.x - 0.2040211 * xyz.y + 1.0570959 * xyz.z;
 
         let w = xyz.y * WHITE_FACTOR;
         let r = r - w * 0.9;
@@ -115,9 +158,9 @@ impl From<XYZ> for RGBW {
         let b = b - w * 1.1;
 
         Self {
-            r: linear_to_srgb(r),
-            g: linear_to_srgb(g),
-            b: linear_to_srgb(b),
+            r: linear_to_srgb(r).clamp(0.0, 1.0),
+            g: linear_to_srgb(g).clamp(0.0, 1.0),
+            b: linear_to_srgb(b).clamp(0.0, 1.0),
             w: gamma_correction(w) * WHITE_SCALING,
         }
     }
@@ -146,7 +189,7 @@ impl From<HCL> for RGBW {
 /// * `x` is a mix of all three RGB curves chosen to be nonnegative,
 /// * `y` is the luminance, and
 /// * `z` is quasi-equal to blue (from CIE RGB).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct XYZ {
     x: f32,
     y: f32,
@@ -181,6 +224,15 @@ impl XYZ {
     }
 }
 
+impl Display for XYZ {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let x = self.x;
+        let y = self.y;
+        let z = self.z;
+        write!(f, "CIEXYZ X={x:1.2}, Y={y:1.2}, Z={z:1.2}")
+    }
+}
+
 impl From<RGB> for XYZ {
     fn from(rgb: RGB) -> Self {
         let r = srgb_to_linear(rgb.r);
@@ -200,7 +252,11 @@ impl From<RGB> for XYZ {
 impl From<CIELUV> for XYZ {
     fn from(cieluv: CIELUV) -> Self {
         if cieluv.l == 0.0 {
-            return XYZ { x: 0.0, y: 0.0, z: 0.0 };
+            return XYZ {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            };
         }
 
         let u_prime = cieluv.u / (13.0 * cieluv.l) + 0.19783000664283;
@@ -225,7 +281,7 @@ impl From<CIELUV> for XYZ {
 /// * `u` is the horizontal axis (green/red), with values approximately `-1.34..2.24`, and
 /// * `v` is the vertical axis (blue/yellow), with values approximately `-1.40..1.22`.
 ///
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct CIELUV {
     l: f32,
     u: f32,
@@ -250,12 +306,25 @@ impl CIELUV {
     }
 }
 
+impl Display for CIELUV {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let l = self.l;
+        let u = self.u;
+        let v = self.v;
+        write!(f, "CIELUV L*={l:1.2}, u*={u:1.2}, v*={v:1.2}")
+    }
+}
+
 impl From<XYZ> for CIELUV {
     // Verified here: http://www.brucelindbloom.com/index.html?Eqn_XYZ_to_Luv.html
     // Introduced constants due to http://www.brucelindbloom.com/LContinuity.html
     fn from(xyz: XYZ) -> Self {
         if xyz.x == 0.0 && xyz.y == 0.0 && xyz.z == 0.0 {
-            return Self { l: 0.0, u: 0.0, v: 0.0 };
+            return Self {
+                l: 0.0,
+                u: 0.0,
+                v: 0.0,
+            };
         }
 
         let u_prime = xyz.u_prime();
@@ -299,7 +368,7 @@ impl From<HCL> for CIELUV {
 /// * `c` is the chromaticity, ranging from `0.0..1.0`, and
 /// * `l` is the luminance, ranging from `0.0..1.0`.
 ///
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct HCL {
     pub h: f32,
     pub c: f32,
