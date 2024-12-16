@@ -8,56 +8,6 @@
 #[cfg(any(test, feature = "std"))]
 extern crate std;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::println;
-
-    #[test]
-    fn test_rgbw_red_yellow() {
-        let red = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 0.0, });
-        let yellow = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 0.0, });
-        for i in 0..=100 {
-            let i = i as f32 / 100.0;
-            let step = CIELUV::interpolate(&red, &yellow, i);
-            let rgb = RGB::from(step);
-            let rgbw = RGBW::from(step);
-            let l = step.l;
-            let c = step.chroma();
-            println!("Red->Yellow {i:1.02}: L*={l:1.02}, {rgbw}");
-            println!("c={c:1.02}                      {rgb}");
-        }
-    }
-
-    #[test]
-    fn test_rgbw_black_white() {
-        let black = CIELUV::from(RGB { r: 0.0, g: 0.0, b: 0.0, });
-        let white = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 1.0, });
-        for i in 0..=100 {
-            let i = i as f32 / 100.0;
-            let step = CIELUV::interpolate(&black, &white, i);
-            let rgb = RGBW::from(step);
-            let l = step.l;
-            println!("Black->White {i:1.02}: L*={l:1.02}, {rgb}");
-        }
-    }
-
-    #[test]
-    fn test_rgbw_green_magenta() {
-        let green = CIELUV::from(RGB { r: 0.0, g: 1.0, b: 0.0, });
-        let magenta = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 1.0, });
-        for i in 0..=100 {
-            let i = i as f32 / 100.0;
-            let step = CIELUV::interpolate(&green, &magenta, i);
-            let rgb = RGBW::from(step);
-            let l = step.l;
-            let c = step.chroma();
-            let sat = step.saturation();
-            println!("Green->Magenta {i:1.02}: L*={l:1.02}, c={c:1.02}, sat={sat:1.02}, {rgb}");
-        }
-    }
-}
-
 #[cfg(not(any(test, feature = "std")))]
 use num_traits::Float;
 
@@ -157,17 +107,26 @@ impl From<RGB> for RGBW {
 
 /// Direct conversion from XYZ to RGBW.
 ///
-/// Uses the Y value (brightness) from XYZ to calculate the white component,
-/// then subtracts the white amount from all individual RGB values.
-///
-/// Otherwise, this conversion is similar to XYZ->RGB.
+/// The white component is ignored when converting directly from XYZ.
+/// You may use the CIELUV to RGBW conversion instead.
 impl From<XYZ> for RGBW {
     fn from(xyz: XYZ) -> Self {
         RGB::from(xyz).into()
     }
 }
 
-/// Conversion from CIELUV to RGBW is is done through the XYZ color space.
+/// Conversion from CIELUV to RGBW is a bit more tricky than with plain RGB,
+/// because we have to derive a value for the white component.
+///
+/// Here, this is done by first performing the CIELUV->XYZ->RGB conversion,
+/// and subsequently using the saturation value from CIELUV to determine
+/// how much of the RGB and white components to use.
+///
+/// The white amount is defined as Y * (1.0 - saturation), whereas the color
+/// RGB components are multiplied by the saturation value.
+///
+/// This calculation produces nice results on SK6812 LEDs with good saturation
+/// for deep reds while avoiding whites that are a mixture of the RGB components.
 impl From<CIELUV> for RGBW {
     fn from(cieluv: CIELUV) -> Self {
         // Color saturation from 0..1
@@ -190,10 +149,10 @@ impl From<CIELUV> for RGBW {
         let w = xyz.y * whiteness;
 
         Self {
-            r: linear_to_srgb(r), //.clamp(0.0, 1.0),
-            g: linear_to_srgb(g), //.clamp(0.0, 1.0),
-            b: linear_to_srgb(b), //.clamp(0.0, 1.0),
-            w: linear_to_srgb(w), //.clamp(0.0, 1.0),
+            r: linear_to_srgb(r).clamp(0.0, 1.0),
+            g: linear_to_srgb(g).clamp(0.0, 1.0),
+            b: linear_to_srgb(b).clamp(0.0, 1.0),
+            w: linear_to_srgb(w).clamp(0.0, 1.0),
         }
     }
 }
@@ -434,5 +393,55 @@ fn linear_to_srgb(c: f32) -> f32 {
         12.92 * c
     } else {
         1.055 * c.powf(1.0 / GAMMA) - 0.055
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::println;
+
+    #[test]
+    fn test_rgbw_red_yellow() {
+        let red = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 0.0, });
+        let yellow = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 0.0, });
+        for i in 0..=100 {
+            let i = i as f32 / 100.0;
+            let step = CIELUV::interpolate(&red, &yellow, i);
+            let rgb = RGB::from(step);
+            let rgbw = RGBW::from(step);
+            let l = step.l;
+            let c = step.chroma();
+            println!("Red->Yellow {i:1.02}: L*={l:1.02}, {rgbw}");
+            println!("c={c:1.02}                      {rgb}");
+        }
+    }
+
+    #[test]
+    fn test_rgbw_black_white() {
+        let black = CIELUV::from(RGB { r: 0.0, g: 0.0, b: 0.0, });
+        let white = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 1.0, });
+        for i in 0..=100 {
+            let i = i as f32 / 100.0;
+            let step = CIELUV::interpolate(&black, &white, i);
+            let rgb = RGBW::from(step);
+            let l = step.l;
+            println!("Black->White {i:1.02}: L*={l:1.02}, {rgb}");
+        }
+    }
+
+    #[test]
+    fn test_rgbw_green_magenta() {
+        let green = CIELUV::from(RGB { r: 0.0, g: 1.0, b: 0.0, });
+        let magenta = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 1.0, });
+        for i in 0..=100 {
+            let i = i as f32 / 100.0;
+            let step = CIELUV::interpolate(&green, &magenta, i);
+            let rgb = RGBW::from(step);
+            let l = step.l;
+            let c = step.chroma();
+            let sat = step.saturation();
+            println!("Green->Magenta {i:1.02}: L*={l:1.02}, c={c:1.02}, sat={sat:1.02}, {rgb}");
+        }
     }
 }
