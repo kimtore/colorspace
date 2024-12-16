@@ -14,23 +14,46 @@ mod tests {
     use std::println;
 
     #[test]
-    fn test_rgb_standard_conversion() {
-        let red = CIELUV::from(RGB {
-            r: 1.0,
-            g: 0.0,
-            b: 0.0,
-        });
-        let yellow = CIELUV::from(RGB {
-            r: 1.0,
-            g: 1.0,
-            b: 0.0,
-        });
+    fn test_rgbw_red_yellow() {
+        let red = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 0.0, });
+        let yellow = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 0.0, });
         for i in 0..=100 {
             let i = i as f32 / 100.0;
             let step = CIELUV::interpolate(&red, &yellow, i);
+            let rgb = RGB::from(step);
+            let rgbw = RGBW::from(step);
+            let l = step.l;
+            let c = step.chroma();
+            println!("Red->Yellow {i:1.02}: L*={l:1.02}, {rgbw}");
+            println!("c={c:1.02}                      {rgb}");
+        }
+    }
+
+    #[test]
+    fn test_rgbw_black_white() {
+        let black = CIELUV::from(RGB { r: 0.0, g: 0.0, b: 0.0, });
+        let white = CIELUV::from(RGB { r: 1.0, g: 1.0, b: 1.0, });
+        for i in 0..=100 {
+            let i = i as f32 / 100.0;
+            let step = CIELUV::interpolate(&black, &white, i);
             let rgb = RGBW::from(step);
             let l = step.l;
-            println!("Red->Yellow {i:1.02}: L*={l:1.02}, {rgb}");
+            println!("Black->White {i:1.02}: L*={l:1.02}, {rgb}");
+        }
+    }
+
+    #[test]
+    fn test_rgbw_green_magenta() {
+        let green = CIELUV::from(RGB { r: 0.0, g: 1.0, b: 0.0, });
+        let magenta = CIELUV::from(RGB { r: 1.0, g: 0.0, b: 1.0, });
+        for i in 0..=100 {
+            let i = i as f32 / 100.0;
+            let step = CIELUV::interpolate(&green, &magenta, i);
+            let rgb = RGBW::from(step);
+            let l = step.l;
+            let c = step.chroma();
+            let sat = step.saturation();
+            println!("Green->Magenta {i:1.02}: L*={l:1.02}, c={c:1.02}, sat={sat:1.02}, {rgb}");
         }
     }
 }
@@ -39,7 +62,7 @@ mod tests {
 use num_traits::Float;
 
 use core::fmt::Display;
-use std::fmt::Formatter;
+use core::fmt::Formatter;
 
 /// Represents a color in the sRGB color space.
 ///
@@ -56,7 +79,7 @@ pub struct RGB {
 }
 
 impl Display for RGB {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let r = self.r;
         let g = self.g;
         let b = self.b;
@@ -68,9 +91,9 @@ impl From<XYZ> for RGB {
     fn from(xyz: XYZ) -> Self {
         // sYCC: Amendment 1 to IEC 61966-2-1:1999.
         // Higher conversion precision with seven decimals.
-        let r = (3.2406255 * xyz.x - 1.5372080 * xyz.y - 0.4986286 * xyz.z).clamp(0.0, 1.0);
-        let g = (-0.9689307 * xyz.x + 1.8758561 * xyz.y + 0.0415175 * xyz.z).clamp(0.0, 1.0);
-        let b = (0.0557101 * xyz.x - 0.2040211 * xyz.y + 1.0570959 * xyz.z).clamp(0.0, 1.0);
+        let r = 3.2406255 * xyz.x - 1.5372080 * xyz.y - 0.4986286 * xyz.z;
+        let g = -0.9689307 * xyz.x + 1.8758561 * xyz.y + 0.0415175 * xyz.z;
+        let b = 0.0557101 * xyz.x - 0.2040211 * xyz.y + 1.0570959 * xyz.z;
 
         Self {
             r: linear_to_srgb(r).clamp(0.0, 1.0),
@@ -111,7 +134,7 @@ pub struct RGBW {
 }
 
 impl Display for RGBW {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let r = self.r;
         let g = self.g;
         let b = self.b;
@@ -140,11 +163,18 @@ impl From<RGB> for RGBW {
 /// Otherwise, this conversion is similar to XYZ->RGB.
 impl From<XYZ> for RGBW {
     fn from(xyz: XYZ) -> Self {
-        // How much luminance is wanted from the white LED.
-        const WHITE_FACTOR: f32 = 0.5;
+        RGB::from(xyz).into()
+    }
+}
 
-        // Perceptual brightness factor of the RGB LEDs compared to the white LED.
-        const WHITE_SCALING: f32 = 0.75;
+/// Conversion from CIELUV to RGBW is is done through the XYZ color space.
+impl From<CIELUV> for RGBW {
+    fn from(cieluv: CIELUV) -> Self {
+        // Color saturation from 0..1
+        let saturation = cieluv.saturation();
+        let whiteness = 1.0 - saturation;
+
+        let xyz = XYZ::from(cieluv);
 
         // sYCC: Amendment 1 to IEC 61966-2-1:1999.
         // Higher conversion precision with seven decimals.
@@ -152,24 +182,19 @@ impl From<XYZ> for RGBW {
         let g = -0.9689307 * xyz.x + 1.8758561 * xyz.y + 0.0415175 * xyz.z;
         let b = 0.0557101 * xyz.x - 0.2040211 * xyz.y + 1.0570959 * xyz.z;
 
-        let w = xyz.y * WHITE_FACTOR;
-        let r = r - w * 0.9;
-        let g = g - w * 1.0;
-        let b = b - w * 1.1;
+        //let rgb_max = r.max(g).max(b);
+
+        let r = r * saturation;
+        let g = g * saturation;
+        let b = b * saturation;
+        let w = xyz.y * whiteness;
 
         Self {
-            r: linear_to_srgb(r).clamp(0.0, 1.0),
-            g: linear_to_srgb(g).clamp(0.0, 1.0),
-            b: linear_to_srgb(b).clamp(0.0, 1.0),
-            w: gamma_correction(w) * WHITE_SCALING,
+            r: linear_to_srgb(r), //.clamp(0.0, 1.0),
+            g: linear_to_srgb(g), //.clamp(0.0, 1.0),
+            b: linear_to_srgb(b), //.clamp(0.0, 1.0),
+            w: linear_to_srgb(w), //.clamp(0.0, 1.0),
         }
-    }
-}
-
-/// Conversion from CIELUV to RGBW is is done through the XYZ color space.
-impl From<CIELUV> for RGBW {
-    fn from(cieluv: CIELUV) -> Self {
-        XYZ::from(cieluv).into()
     }
 }
 
@@ -225,7 +250,7 @@ impl XYZ {
 }
 
 impl Display for XYZ {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let x = self.x;
         let y = self.y;
         let z = self.z;
@@ -304,10 +329,17 @@ impl CIELUV {
     pub fn chroma(&self) -> f32 {
         (self.u.powi(2) + self.v.powi(2)).sqrt()
     }
+
+    pub fn saturation(&self) -> f32 {
+        if self.l <= 0.0 {
+            return 0.0;
+        }
+        self.chroma() / self.l
+    }
 }
 
 impl Display for CIELUV {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let l = self.l;
         let u = self.u;
         let v = self.v;
@@ -403,10 +435,4 @@ fn linear_to_srgb(c: f32) -> f32 {
     } else {
         1.055 * c.powf(1.0 / GAMMA) - 0.055
     }
-}
-
-/// Gamma correction for RGB
-#[inline]
-fn gamma_correction(c: f32) -> f32 {
-    c.powf(1.0 / GAMMA)
 }
