@@ -1,0 +1,11 @@
+[package]
+name = "colorspace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
+
+[features]
+default = []
+std = ["num-traits/std"]
