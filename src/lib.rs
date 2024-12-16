@@ -8,6 +8,9 @@
 #[cfg(any(test, feature = "std"))]
 extern crate std;
 
+#[cfg(test)]
+mod test;
+
 #[cfg(not(any(test, feature = "std")))]
 use num_traits::Float;
 
@@ -50,9 +53,9 @@ impl RGB {
         b: 1.0,
     };
     pub const WHITE: RGB = RGB {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
     };
 }
 
@@ -203,9 +206,9 @@ impl From<HCL> for RGBW {
 /// * `z` is quasi-equal to blue (from CIE RGB).
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct XYZ {
-    x: f32,
-    y: f32,
-    z: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
 // Constants for D65 white point
@@ -289,15 +292,15 @@ impl From<CIELUV> for XYZ {
 
 /// Represents a color using the CIE 1976 L*, u*, v* color space.
 ///
-/// * `l` is the luminance, with values nominally within `0.0..1.0`, but usually `-10.0..15.0`,
+/// * `l` is the luminance, with values nominally within `0.0..9.0`,
 /// * `u` is the horizontal axis (green/red), with values approximately `-1.34..2.24`, and
 /// * `v` is the vertical axis (blue/yellow), with values approximately `-1.40..1.22`.
 ///
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct CIELUV {
-    l: f32,
-    u: f32,
-    v: f32,
+    pub l: f32,
+    pub u: f32,
+    pub v: f32,
 }
 
 impl CIELUV {
@@ -311,6 +314,15 @@ impl CIELUV {
             u: lerp(self.u, end.u, t),
             v: lerp(self.v, end.v, t),
         }
+    }
+
+    /// Hue is expressed in degrees between 0.0..360.0.
+    pub fn hue(&self) -> f32 {
+        let mut h = self.v.atan2(self.u).to_degrees();
+        if h < 0.0 {
+            h += 360.0;
+        }
+        h
     }
 
     pub fn chroma(&self) -> f32 {
@@ -394,6 +406,28 @@ pub struct HCL {
     pub l: f32,
 }
 
+impl From<RGB> for HCL {
+    fn from(rgb: RGB) -> Self {
+        CIELUV::from(rgb).into()
+    }
+}
+
+impl From<XYZ> for HCL {
+    fn from(xyz: XYZ) -> Self {
+        CIELUV::from(xyz).into()
+    }
+}
+
+impl From<CIELUV> for HCL {
+    fn from(cieluv: CIELUV) -> Self {
+        HCL {
+            h: cieluv.hue(),
+            c: cieluv.chroma(),
+            l: cieluv.l,
+        }
+    }
+}
+
 /// Helper function to perform linear interpolation
 #[inline]
 pub fn lerp(start: f32, end: f32, t: f32) -> f32 {
@@ -421,116 +455,5 @@ fn linear_to_srgb(c: f32) -> f32 {
         12.92 * c
     } else {
         1.055 * c.powf(1.0 / GAMMA) - 0.055
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::println;
-
-    fn round(x: f32) -> f32 {
-        (x * 100.0).round() / 100.0
-    }
-
-    /// Equal to the second decimal.
-    fn approximately_equal(actual: RGBW, expected: RGBW) {
-        assert_eq!(
-            round(actual.r),
-            round(expected.r),
-            "found {actual}, expected {expected}"
-        );
-        assert_eq!(
-            round(actual.g),
-            round(expected.g),
-            "found {actual}, expected {expected}"
-        );
-        assert_eq!(
-            round(actual.b),
-            round(expected.b),
-            "found {actual}, expected {expected}"
-        );
-        assert_eq!(
-            round(actual.w),
-            round(expected.w),
-            "found {actual}, expected {expected}"
-        );
-    }
-
-    fn assert_clean_cieluv_conversion(rgb: RGB) {
-        let expected = RGBW::from(rgb);
-        let cieluv = CIELUV::from(rgb);
-        approximately_equal(cieluv.into(), expected.into());
-    }
-
-    /// Red, green, blue, yellow and magenta convert cleanly to CIELUV and back.
-    #[test]
-    fn test_saturated_clean_conversion() {
-        assert_clean_cieluv_conversion(RGB {
-            r: 1.0,
-            g: 0.0,
-            b: 0.0,
-        });
-        assert_clean_cieluv_conversion(RGB {
-            r: 0.0,
-            g: 1.0,
-            b: 0.0,
-        });
-        assert_clean_cieluv_conversion(RGB {
-            r: 0.0,
-            g: 0.0,
-            b: 1.0,
-        });
-        assert_clean_cieluv_conversion(RGB {
-            r: 1.0,
-            g: 0.0,
-            b: 1.0,
-        });
-        assert_clean_cieluv_conversion(RGB {
-            r: 1.0,
-            g: 1.0,
-            b: 0.0,
-        });
-
-        // Teal is too light to convert cleanly, it will contain a white component.
-        //assert_clean_cieluv_conversion(RGB { r: 0.0, g: 1.0, b: 1.0 });
-    }
-
-    fn print_gradient_as_rgbw(a: impl Into<CIELUV>, b: impl Into<CIELUV>, steps: usize) {
-        let a = a.into();
-        let b = b.into();
-
-        println!("Start.........: {a}");
-        println!("End...........: {b}");
-
-        for i in 0..=steps {
-            let i = i as f32 / steps as f32;
-            let cieluv = CIELUV::interpolate(&a, &b, i);
-            let rgbw = RGBW::from(cieluv);
-            let l = cieluv.l;
-            let sat = cieluv.saturation();
-            let c = cieluv.chroma();
-            println!("Gradient {i:1.03}: L*={l:1.03}, sat={sat:1.03}, chroma={c:1.03} // {rgbw}");
-        }
-    }
-
-    #[test]
-    fn test_rgbw_red_green() {
-        print_gradient_as_rgbw(RGB::RED, RGB::GREEN, 100);
-    }
-
-    #[test]
-    fn test_rgbw_black_white() {
-        print_gradient_as_rgbw(RGB::BLACK, RGB::WHITE, 100);
-    }
-
-    #[test]
-    fn test_rgbw_green_magenta() {
-        let magenta = CIELUV::from(RGB {
-            r: 1.0,
-            g: 0.0,
-            b: 1.0,
-        });
-        print_gradient_as_rgbw(RGB::GREEN, magenta, 100);
     }
 }
